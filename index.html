@@ -1,0 +1,256 @@
+<script>window.Intl=window.Intl||{};Intl.t=function(s){return(Intl._locale&&Intl._locale[s])||s;};</script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Leave-By Calculator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+    </style>
+</head>
+<body class="bg-slate-100 min-h-screen flex items-center justify-center p-4">
+    <div class="w-full max-w-2xl">
+        <!-- Blue Header -->
+        <div class="bg-blue-600 text-white rounded-t-2xl px-6 py-5 shadow-lg">
+            <h1 class="text-2xl font-bold">Leave-By Calculator</h1>
+            <p class="text-blue-100 text-sm mt-1">FMCSA-compliant departure planner</p>
+        </div>
+
+        <!-- White Card -->
+        <div class="bg-white rounded-b-2xl shadow-xl p-6 space-y-5">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="md:col-span-2">
+                    <label class="block text-sm font-medium text-slate-700 mb-1">Must Arrive By</label>
+                    <input id="arriveBy" type="datetime-local" class="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">Total Distance (miles)</label>
+                    <input id="distance" type="number" value="550" min="1" class="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">Hours You'll Have When You Leave</label>
+                    <input id="hoursLeft" type="number" value="14" min="0" max="14" step="0.1" class="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
+                </div>
+
+                <div class="md:col-span-2">
+                    <label class="block text-sm font-medium text-slate-700 mb-1">Average Speed: <span id="speedVal" class="font-semibold text-blue-600">50</span> mph</label>
+                    <input id="speed" type="range" min="30" max="80" value="50" class="w-full accent-blue-600">
+                    <div class="flex justify-between text-xs text-slate-500 mt-1">
+                        <span>30</span><span>80</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="space-y-3 pt-2 border-t border-slate-200">
+                <label class="flex items-center gap-3 cursor-pointer">
+                    <input id="use11" type="checkbox" checked class="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500">
+                    <span class="text-sm text-slate-700">Use 11-Hour Driving Rule (unchecked = 10.5h)</span>
+                </label>
+                <label class="flex items-center gap-3 cursor-pointer">
+                    <input id="fresh" type="checkbox" class="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500">
+                    <span class="text-sm text-slate-700">Arrive fresh - take 10-hour break before trip</span>
+                </label>
+                <label class="flex items-center gap-3 cursor-pointer">
+                    <input id="buffer" type="checkbox" checked class="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500">
+                    <span class="text-sm text-slate-700">Add 30-minute safety buffer</span>
+                </label>
+            </div>
+
+            <button id="calc" class="w-full bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-semibold py-3 rounded-xl shadow-md transition">
+                Calculate Departure
+            </button>
+
+            <!-- Green Result Box -->
+            <div id="result" class="hidden bg-green-50 border border-green-200 rounded-xl p-4">
+                <p id="resultText" class="font-semibold text-green-800 text-lg"></p>
+                <p id="resultSub" class="text-sm text-green-700 mt-1"></p>
+            </div>
+
+            <!-- Blue Log Box -->
+            <div id="logBox" class="hidden bg-blue-50 border border-blue-200 rounded-xl p-4">
+                <h3 class="font-semibold text-blue-900 mb-3">Planned Timeline</h3>
+                <ul id="logList" class="list-disc pl-5 space-y-1.5 text-sm text-blue-900"></ul>
+            </div>
+        </div>
+    </div>
+
+<script>
+/* ---------- Helpers ---------- */
+const addHours = (date, h) => new Date(date.getTime() + h * 3600000);
+const formatDate = (d) => d.toLocaleString('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit' });
+const formatTime = (d) => d.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' });
+
+/* ---------- FMCSA Forward Simulation ---------- */
+function simulateForward(startDate, distance, speed, hoursLeft, maxDrive, collectLog = false) {
+    const maxDuty = 14;
+    const breakTrigger = 8;
+    const inspectionTime = 0.25; // 15 min
+    const breakTime = 0.5;
+    const sleepTime = 10;
+
+    let now = new Date(startDate);
+    let miles = distance;
+    let dutyClock = hoursLeft;
+    let driveClock = Math.min(maxDrive, hoursLeft);
+    let driveSinceBreak = 0;
+    const log = [];
+
+    // If starting with a fresh 14, do pre-trip at start
+    if (hoursLeft >= 13.999) {
+        if (collectLog) log.push({time: new Date(now), event: 'Pre-trip inspection (15 min)'});
+        now = addHours(now, inspectionTime);
+        dutyClock -= inspectionTime;
+    }
+
+    let safety = 0;
+    while (miles > 0.0001 && safety++ < 20000) {
+        // Need break?
+        if (driveSinceBreak >= breakTrigger - 1e-6) {
+            if (collectLog) log.push({time: new Date(now), event: '30-minute break (8-hour rule)'});
+            now = addHours(now, breakTime);
+            dutyClock -= breakTime;
+            driveSinceBreak = 0;
+            continue;
+        }
+
+        // Out of hours?
+        if (driveClock <= 1e-6 || dutyClock <= 1e-6) {
+            if (collectLog) log.push({time: new Date(now), event: 'Post-trip inspection (15 min)'});
+            now = addHours(now, inspectionTime);
+            if (collectLog) log.push({time: new Date(now), event: '10-hour sleeper berth'});
+            now = addHours(now, sleepTime);
+            dutyClock = maxDuty;
+            driveClock = maxDrive;
+            driveSinceBreak = 0;
+            if (collectLog) log.push({time: new Date(now), event: 'Pre-trip inspection (15 min)'});
+            now = addHours(now, inspectionTime);
+            dutyClock -= inspectionTime;
+            continue;
+        }
+
+        const timeToDest = miles / speed;
+        const timeToBreak = breakTrigger - driveSinceBreak;
+        const leg = Math.min(timeToDest, driveClock, dutyClock, timeToBreak);
+
+        if (leg <= 1e-9) {
+            driveSinceBreak = breakTrigger; // force break next loop
+            continue;
+        }
+
+        const startDrive = new Date(now);
+        now = addHours(now, leg);
+        miles -= leg * speed;
+        dutyClock -= leg;
+        driveClock -= leg;
+        driveSinceBreak += leg;
+
+        if (collectLog) {
+            const hrs = Math.floor(leg);
+            const mins = Math.round((leg - hrs) * 60);
+            log.push({time: startDrive, event: `Drive ${(leg * speed).toFixed(1)} mi (${hrs}h ${mins}m)`});
+        }
+    }
+
+    // Final post-trip
+    if (collectLog) log.push({time: new Date(now), event: 'Post-trip inspection (15 min)'});
+    now = addHours(now, inspectionTime);
+
+    return collectLog ? {arrival: now, log} : now;
+}
+
+/* ---------- Binary Search for Leave-By ---------- */
+function findLatestDeparture(arriveByTarget, distance, speed, hoursLeft, maxDrive) {
+    const low = new Date(arriveByTarget.getTime() - 14 * 24 * 3600000); // 14 days earlier
+    const high = new Date(arriveByTarget);
+
+    let best = new Date(low);
+    for (let i = 0; i < 30; i++) {
+        const mid = new Date((low.getTime() + high.getTime()) / 2);
+        const arrival = simulateForward(mid, distance, speed, hoursLeft, maxDrive, false);
+        if (arrival.getTime() <= arriveByTarget.getTime() + 60000) { // within 1 min
+            best = mid;
+            low.setTime(mid.getTime() + 1);
+        } else {
+            high.setTime(mid.getTime() - 1);
+        }
+        if (high.getTime() <= low.getTime()) break;
+    }
+    return best;
+}
+
+/* ---------- UI ---------- */
+const speedInput = document.getElementById('speed');
+const speedVal = document.getElementById('speedVal');
+speedInput.addEventListener('input', () => speedVal.textContent = speedInput.value);
+
+// Default arriveBy = now + 24h
+const arriveInput = document.getElementById('arriveBy');
+const now = new Date();
+const defaultArrive = new Date(now.getTime() + 24 * 3600000);
+arriveInput.value = defaultArrive.toISOString().slice(0,16);
+
+document.getElementById('calc').addEventListener('click', () => {
+    const arriveBy = new Date(arriveInput.value);
+    if (isNaN(arriveBy)) { alert('Please select a valid arrival time'); return; }
+
+    const distance = parseFloat(document.getElementById('distance').value);
+    const speed = parseFloat(speedInput.value);
+    const hoursLeft = parseFloat(document.getElementById('hoursLeft').value);
+    const maxDrive = document.getElementById('use11').checked ? 11 : 10.5;
+    const useFresh = document.getElementById('fresh').checked;
+    const useBuffer = document.getElementById('buffer').checked;
+
+    // 1. Target for driving end (subtract final post-trip)
+    let driveEndTarget = addHours(arriveBy, -0.25); // final post-trip
+    
+    // 2. Subtract buffer if requested
+    if (useBuffer) {
+        driveEndTarget = addHours(driveEndTarget, -0.5);
+    }
+
+    // 3. Find latest start time for driving portion
+    const driveStart = findLatestDeparture(driveEndTarget, distance, speed, hoursLeft, maxDrive);
+
+    // 4. Handle fresh break reservation
+    const freshReserve = 10 + 0.25; // 10h sleep + 15m pre-trip
+    let finalDeparture = new Date(driveStart);
+    let fullLog = [];
+
+    if (useFresh) {
+        // Depart earlier to take break first, then start driving at driveStart
+        finalDeparture = addHours(driveStart, -freshReserve);
+        fullLog.push({time: finalDeparture, event: 'Begin 10-hour sleeper berth (depart fresh)'});
+        fullLog.push({time: addHours(finalDeparture, 10), event: 'Pre-trip inspection (15 min) after fresh break'});
+    }
+
+    // 5. Simulate the driving portion and collect log
+    const sim = simulateForward(driveStart, distance, speed, hoursLeft, maxDrive, true);
+    fullLog = fullLog.concat(sim.log);
+
+    // 6. Add buffer note if applicable
+    if (useBuffer) {
+        fullLog.push({time: sim.arrival, event: 'Arrive at shipper/receiver – 30-minute safety buffer before appointment'});
+        fullLog.push({time: addHours(sim.arrival, 0.5), event: `Must-arrive-by appointment time`});
+    } else {
+        fullLog.push({time: sim.arrival, event: 'Arrive at destination (on-time)'});
+    }
+
+    // Display
+    document.getElementById('resultText').textContent = `Leave no later than: ${formatDate(finalDeparture)}`;
+    document.getElementById('resultSub').textContent = `Planned arrival: ${formatTime(sim.arrival)} → Appointment: ${formatTime(arriveBy)}`;
+    document.getElementById('result').classList.remove('hidden');
+
+    const logList = document.getElementById('logList');
+    logList.innerHTML = '';
+    fullLog.forEach(entry => {
+        const li = document.createElement('li');
+        li.innerHTML = `<span class="font-medium">${formatTime(entry.time)}</span> – ${entry.event}`;
+        logList.appendChild(li);
+    });
+    document.getElementById('logBox').classList.remove('hidden');
+});
+</script>
+</body>
+</html>
