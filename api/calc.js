@@ -1,8 +1,25 @@
 // Leave-By Calculator API
 // FMCSA-compliant departure planner
 // Rate limit: 3200 calls/day (enforced via response header)
+// Auth: API key required (set LEAVE_BY_API_KEY in Vercel env vars)
 
 const MAX_CALLS_PER_DAY = 3200;
+
+// API Key auth check
+function checkAuth(req) {
+  const validKey = process.env.LEAVE_BY_API_KEY;
+  if (!validKey) return { ok: true }; // no key set = open (dev mode)
+  
+  // Check x-api-key header, Authorization: Bearer, or ?key= query param
+  const provided = 
+    req.headers['x-api-key'] ||
+    (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '') ||
+    req.query.key;
+  
+  if (!provided) return { ok: false, error: 'Missing API key. Pass via x-api-key header or ?key= param.' };
+  if (provided !== validKey) return { ok: false, error: 'Invalid API key.' };
+  return { ok: true };
+}
 
 // In-memory rate tracker (resets on cold start, best-effort for serverless)
 const rateTracker = { count: 0, resetDate: null };
@@ -136,6 +153,12 @@ export default function handler(req, res) {
     return res.status(200).end();
   }
 
+  // Auth check
+  const auth = checkAuth(req);
+  if (!auth.ok) {
+    return res.status(401).json({ error: auth.error });
+  }
+
   // Rate limit check
   const rate = checkRate();
   res.setHeader('X-RateLimit-Limit', rate.limit);
@@ -165,6 +188,7 @@ export default function handler(req, res) {
   if (!arriveBy || !distance) {
     return res.status(400).json({
       error: 'Missing required fields',
+      auth: 'Pass key via x-api-key header, Authorization: Bearer, or ?key= param',
       required: { arriveBy: 'ISO datetime string', distance: 'miles (number)' },
       optional: {
         speed: 'mph (default: 50)',
@@ -173,7 +197,7 @@ export default function handler(req, res) {
         fresh: 'true/false - 10h break before trip (default: false)',
         buffer: 'true/false - 30min safety buffer (default: true)'
       },
-      example: 'GET /api/calc?arriveBy=2026-04-20T14:00&distance=542'
+      example: 'GET /api/calc?key=YOUR_KEY&arriveBy=2026-04-20T14:00&distance=542'
     });
   }
 
